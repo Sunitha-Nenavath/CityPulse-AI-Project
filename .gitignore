@@ -1,0 +1,24 @@
+# Python virtual environments
+venv/
+.venv/
+env/
+
+# Credentials and keys
+.env
+*.key
+*.json (unless configuration)
+!credentials.json.example
+
+# Python cache and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ipynb_checkpoints/
+
+# System specific
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

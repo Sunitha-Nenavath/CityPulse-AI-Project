@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  citypulse-ai:
+    build: .
+    container_name: citypulse_app
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: always
