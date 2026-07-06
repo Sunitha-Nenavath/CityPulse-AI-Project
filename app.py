@@ -175,12 +175,14 @@ with st.sidebar:
     # Showcase Fallback Systems explicitly
     st.markdown("#### Operational Status")
     
-    # 1. Gemini status
+    # 1. Gemini / Mistral status
     if agent.use_gemini:
         st.success("🟢 Gemini API: LIVE")
+    elif agent.use_mistral:
+        st.success("🟢 Mistral API: LIVE")
     else:
         st.warning("🟡 Gemini API: MOCK (fallback)")
-        st.caption("⚠️ `GEMINI_API_KEY` is not set or the API connection test failed. Local heuristic processing is active.")
+        st.caption("⚠️ `GEMINI_API_KEY` (or Mistral key) is not set or the API connection test failed. Local heuristic processing is active.")
         
     # 2. BigQuery status
     if analytics_engine.use_bigquery:

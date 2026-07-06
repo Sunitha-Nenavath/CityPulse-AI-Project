@@ -21,14 +21,38 @@ class ConversationalAgent:
         self.rag.load_index()
         
         self.use_gemini = False
-        api_key = os.getenv("GEMINI_API_KEY")
-        if api_key and api_key.strip() and not api_key.startswith("your_"):
-            try:
-                genai.configure(api_key=api_key)
-                self.use_gemini = True
-                print("Gemini API key configured for Conversational Agent.")
-            except Exception as e:
-                print(f"Failed to configure Gemini API for Agent: {e}. Using local rule-based responder.")
+        self.use_mistral = False
+        self.api_key = os.getenv("GEMINI_API_KEY")
+        
+        if self.api_key and self.api_key.strip() and not self.api_key.startswith("your_"):
+            if self.api_key.startswith("AQ."):
+                try:
+                    # Test Mistral connection
+                    import urllib.request
+                    import json
+                    url = "https://api.mistral.ai/v1/chat/completions"
+                    headers = {
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    }
+                    data = {
+                        "model": "mistral-small-latest",
+                        "messages": [{"role": "user", "content": "Ping"}]
+                    }
+                    req = urllib.request.Request(url, data=json.dumps(data).encode("utf-8"), headers=headers, method="POST")
+                    with urllib.request.urlopen(req, timeout=10) as response:
+                        if response.status == 200:
+                            self.use_mistral = True
+                            print("Mistral API key configured for Conversational Agent.")
+                except Exception as e:
+                    print(f"Failed to configure Mistral API for Agent: {e}. Using local rule-based responder.")
+            else:
+                try:
+                    genai.configure(api_key=self.api_key)
+                    self.use_gemini = True
+                    print("Gemini API key configured for Conversational Agent.")
+                except Exception as e:
+                    print(f"Failed to configure Gemini API for Agent: {e}. Using local rule-based responder.")
         else:
             print("GEMINI_API_KEY not configured. Using local rule-based grounded responder.")
             
@@ -187,6 +211,29 @@ class ConversationalAgent:
             
         return "\n".join(response)
 
+    def _call_mistral_completion(self, prompt):
+        import urllib.request
+        import json
+        url = "https://api.mistral.ai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        data = {
+            "model": "mistral-large-latest",
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.2
+        }
+        
+        req = urllib.request.Request(url, data=json.dumps(data).encode("utf-8"), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=30) as response:
+            res_body = response.read().decode("utf-8")
+            res_json = json.loads(res_body)
+            return res_json["choices"][0]["message"]["content"]
+
     def generate_response(self, query):
         """
         Retrieves context, formats a prompt, and generates a response.
@@ -195,14 +242,10 @@ class ConversationalAgent:
         # 1. Retrieve grounding data
         context_str, rankings_df, spikes_df, rag_results, latest_week = self._retrieve_grounding_context(query)
         
-        if not self.use_gemini:
+        if not self.use_gemini and not self.use_mistral:
             return self._generate_rule_based_response(query, context_str, rankings_df, spikes_df, rag_results, latest_week)
             
-        # 2. Use Gemini
-        try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            
-            prompt = f"""
+        prompt = f"""
 You are "CityPulse AI", a conversational civic intelligence platform assistant designed for municipal ward officers.
 Your role is to help ward officers prioritize response and spot patterns in citizen complaints using real-time data analysis.
 
@@ -222,6 +265,17 @@ Grounding Context:
 User Query:
 {query}
 """
+
+        if self.use_mistral:
+            try:
+                return self._call_mistral_completion(prompt)
+            except Exception as e:
+                print(f"Mistral generation failed: {e}. Falling back to rule-based response.")
+                return self._generate_rule_based_response(query, context_str, rankings_df, spikes_df, rag_results, latest_week)
+                
+        # 3. Use Gemini
+        try:
+            model = genai.GenerativeModel("gemini-1.5-flash")
             
             response = model.generate_content(
                 prompt,

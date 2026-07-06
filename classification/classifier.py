@@ -4,6 +4,7 @@ import time
 import pandas as pd
 from dotenv import load_dotenv
 import google.generativeai as genai
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Load environment variables
@@ -109,6 +110,63 @@ Complaints to classify:
     results = json.loads(response.text)
     return results
 
+def classify_batch_with_mistral(batch_df, api_key):
+    """
+    Sends a batch of complaints to Mistral to classify.
+    Returns a dictionary mapping complaint_id to classification results.
+    """
+    complaints_list = []
+    for _, row in batch_df.iterrows():
+        complaints_list.append({
+            "id": row["complaint_id"],
+            "text": row["description_text"]
+        })
+        
+    prompt = f"""
+You are a municipal assistant helper. Classify the following complaints.
+For each complaint:
+1. Determine the category: 'pothole', 'garbage', 'water_leak', 'streetlight', or 'other'.
+2. Assign an urgency score: 1 (Very Low) to 5 (Critical).
+3. Determine the sentiment: 'negative', 'neutral', or 'positive'.
+
+Return the result strictly as a valid JSON array of objects, with no markdown tags other than the JSON itself. Each object should have fields:
+"id": (string matching the input complaint ID)
+"category": (string)
+"urgency": (integer 1-5)
+"sentiment": (string)
+
+Complaints to classify:
+{json.dumps(complaints_list, indent=2)}
+"""
+
+    url = "https://api.mistral.ai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    data = {
+        "model": "mistral-small-latest",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "response_format": {"type": "json_object"}
+    }
+    
+    req = urllib.request.Request(url, data=json.dumps(data).encode("utf-8"), headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=30) as response:
+        res_body = response.read().decode("utf-8")
+        res_json = json.loads(res_body)
+        content = res_json["choices"][0]["message"]["content"].strip()
+        
+        # Strip markdown if model outputted it
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+            
+        return json.loads(content)
+
 def run_classification():
     if not os.path.exists(RAW_DATA_PATH):
         print(f"Error: Raw complaints dataset not found at {RAW_DATA_PATH}. Run generator first.")
@@ -119,25 +177,46 @@ def run_classification():
     # Initialize API key
     api_key = os.getenv("GEMINI_API_KEY")
     use_gemini = False
+    use_mistral = False
     
     if api_key and api_key.strip() and not api_key.startswith("your_"):
-        try:
-            genai.configure(api_key=api_key)
-            # Test connection
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            model.generate_content("Ping", generation_config={"response_mime_type": "text/plain"})
-            use_gemini = True
-            print("Gemini API key configured successfully. Running batch classification with Gemini...")
-        except Exception as e:
-            print(f"Failed to configure Gemini API or connection timed out: {e}. Falling back to local heuristic.")
+        if api_key.startswith("AQ."):
+            try:
+                # Test connection
+                url = "https://api.mistral.ai/v1/chat/completions"
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                }
+                data = {
+                    "model": "mistral-small-latest",
+                    "messages": [{"role": "user", "content": "Ping"}]
+                }
+                req = urllib.request.Request(url, data=json.dumps(data).encode("utf-8"), headers=headers, method="POST")
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    if response.status == 200:
+                        use_mistral = True
+                        print("Mistral API key configured successfully. Running batch classification with Mistral...")
+            except Exception as e:
+                print(f"Failed to connect to Mistral API: {e}. Falling back to local heuristic.")
+        else:
+            try:
+                genai.configure(api_key=api_key)
+                # Test connection
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                model.generate_content("Ping", generation_config={"response_mime_type": "text/plain"})
+                use_gemini = True
+                print("Gemini API key configured successfully. Running batch classification with Gemini...")
+            except Exception as e:
+                print(f"Failed to configure Gemini API or connection timed out: {e}. Falling back to local heuristic.")
     else:
-        print("GEMINI_API_KEY not found or holds default placeholder. Falling back to local heuristic classifier.")
+        print("API Key not found or holds default placeholder. Falling back to local heuristic classifier.")
         
     categories_classified = []
     urgency_scores = []
     sentiments = []
     
-    if use_gemini:
+    if use_gemini or use_mistral:
         # We will process in batches of 50 to avoid token and rate limits
         batch_size = 50
         num_batches = (len(df) + batch_size - 1) // batch_size
@@ -153,7 +232,10 @@ def run_classification():
             
             for attempt in range(3):
                 try:
-                    res = classify_batch_with_gemini(batch_df)
+                    if use_gemini:
+                        res = classify_batch_with_gemini(batch_df)
+                    else:
+                        res = classify_batch_with_mistral(batch_df, api_key)
                     # Put into map
                     batch_res = {}
                     for item in res:
@@ -168,8 +250,8 @@ def run_classification():
                     print(f"Error processing batch {batch_idx + 1} (Attempt {attempt + 1}/3): {ex}")
                     time.sleep(2)
             
-            # Fallback for this batch if Gemini fails after retries
-            print(f"Gemini batch {batch_idx + 1} failed all attempts. Using local heuristic fallback for this batch.")
+            # Fallback for this batch if API fails after retries
+            print(f"Batch {batch_idx + 1} failed all attempts. Using local heuristic fallback for this batch.")
             fallback_res = {}
             for _, row in batch_df.iterrows():
                 cat, urg, sent = local_heuristic_classifier(row["description_text"], row["category"], row["status"])
