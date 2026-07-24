@@ -1,5 +1,7 @@
 # 🏙️ CityPulse AI: Conversational Civic Intelligence Platform
 
+Live Demo: https://citypulse-ai-project-mahzk6a538sb4f7fyvzyjj.streamlit.app/
+
 **CityPulse AI** is a full-stack conversational civic intelligence platform built for **municipal ward officers**. Officers receive high volumes of citizen complaints (potholes, garbage overflow, water leaks, streetlight outages) from multiple channels and struggle to prioritize their daily responses or identify structural spikes. 
 
 CityPulse AI resolves this by automatically analyzing complaint patterns, computing a **weighted urgency priority index**, flagging anomalies, indexing historical resolutions using **RAG (Retrieval-Augmented Generation)**, and exposing a **grounded conversational assistant** to answer complex questions using real-time spatial and time-series data.
